@@ -1,47 +1,85 @@
-# embedded-template — the reusable infra for every project repo
+# ground-station-lcd — DSI/LTDC + SDRAM display ground station
 
-This is the engineering platform behind all 20 projects of the embedded
-portfolio program ([portfolio meta-repo](https://github.com/caiobvilar/Embedded_Portfolio)):
-the CMake toolchain files, CI pipelines, requirements tooling, fake HAL, and
-doc skeletons that make a new project repo start already-green.
+**A self-contained ground-station / HMI on an STM32F469I-DISCO — DSI display
+(LTDC + DSI host) and external SDRAM brought up as the bench's readout surface
+for the EdgeAI trio — scaffolded; the ST-LINK/MCU identity is verified, and
+the SDRAM/DSI facts that gate bring-up are explicitly not yet.**
 
-It exists so that **consistency across repos is itself a signal** — every
-project repo uses the same build, the same gates, the same doc structure, so
-an interviewer (or future-me) can orient in 30 seconds.
+The display/interface half of the portfolio: a place where a model's output is
+actually shown to a human. Not an inference project — the interesting
+engineering is the LTDC/DSI subsystem, external-SDRAM initialization ordering
+in `SystemInit`, and the framing protocol that carries live values from the
+compute boards to the screen.
 
-## What's inside
+> **Status: migrated scaffold.** No code yet. The board's MCU/ST-LINK identity
+> is verified by tool readout; everything that gates this project (SDRAM part,
+> DSI panel, LTDC/DSI pins, VCP) is documented as unverified and must be
+> confirmed before bring-up.
+
+## What this demonstrates (planned)
+
+| | |
+|---|---|
+| **Hardware** | DSI LCD + LTDC, external SDRAM (init in `SystemInit`), F469 clock tree |
+| **Firmware** | Framebuffer management, DSI/LTDC register build-up, framing protocol to compute boards |
+| **Integration** | Readout surface for the EdgeAI trio — model output shown to a human |
+
+## Verified facts in hand
+
+| Fact | Value | Source |
+|---|---|---|
+| MCU | STM32F469NIH6, chip 0x434, 2 MB flash / 256 KB SRAM | st-info readout, 2026-07-27 |
+| ST-LINK | V2J45S31, serial 0671FF515786534867191431 | st-info readout, 2026-07-27 |
+
+Everything else — SDRAM part/size, DSI panel, LTDC/DSI pins, VCP, clock
+limits — is **unverified** in [docs/hardware/stm32f469i-disco.md](docs/hardware/stm32f469i-disco.md).
+
+## Architecture (planned)
+
+```
+EdgeAI boards (tinyml-m0 / gesture-imu / vibration-fault-predict)
+        │  framing protocol (to be decided: UART / existing debug protocol)
+        ▼
+STM32F469 ◄── external SDRAM (SystemInit init order matters)
+        │
+        ▼
+   LTDC + DSI host ──► DSI panel  (the readout surface)
+```
+
+## Repository layout
 
 | Path | Contents |
 |---|---|
-| `cmake/` | `arm-none-eabi.cmake` (cross toolchain, pin by board), `host.cmake` (native + ASAN/UBSAN + coverage helpers) |
-| `.github/workflows/` | `ci.yml`, `sitl.yml`, `hil.yml`, `release.yml` — the four pipelines, parameterised |
-| `tools/` | `gen_rtm.py` (requirements↔tests RTM gate), `check_layering.py`, `check_size_budget.py`, `sign_image.py` (Ed25519) |
-| `src/ports/` | Hexagonal port interfaces: `i_uart.h`, `i_spi.h`, `i_i2c.h`, `i_clock.h` |
-| `src/adapters/host/` | Test doubles for the ports (recording fake UART, scripted clock) |
-| `templates/docs/` | SRS, test-plan, design-review-checklist, project-README skeletons |
-| `Containerfile.toolchain` + `requirements.*` | Reproducible toolchain container (pin everything, hash-locked Python deps) |
-| `.clang-format` `.clang-tidy` `.cppcheck-suppressions` | Zero-warning static-analysis posture |
+| `src/domain/` | Framebuffer layout, register build-up logic — host-testable |
+| `src/ports/` | Display + SDRAM + comms interfaces |
+| `src/adapters/` | Real (stm32f4) + host fake implementations |
+| `test/unit/` | Unity host tests |
+| `docs/adr/` | Toolchain decisions (0001, 0003) |
+| `docs/hardware/` | STM32F469I-DISCO fact sheet |
 
-## Create a new project repo from this template
+## Build and run
 
-```bash
-# on GitHub, "Use this template" -- or:
-gh repo create <project-slug> --template caiobvilar/embedded-template --public
-```
+Not yet buildable — no CMake project exists, and the SDRAM/DSI facts that
+gate the `SystemInit` and bring-up code are still unverified. SRS + G1 come
+first.
 
-Then:
-1. Write `docs/02-srs.md` (from `templates/docs/srs-template.md`) and
-   `docs/requirements/*.yaml` — **before any code** (program rule 1).
-2. Set the flash/RAM budgets in `ci.yml`'s size-gate step and the target in
-   `cmake/arm-none-eabi.cmake` (per-board `-mcpu`).
-3. Generate the CubeMX project into `cubemx/` for the firmware half (see the
-   portfolio's ADR pattern for the CubeMX/CMake integration boundary).
-4. Put pure logic in `src/domain/` (host-testable), hardware in
-   `src/adapters/stm32f4/`, interfaces in `src/ports/`.
-5. `cmake --preset host-test && ctest --preset host-test` — the loop is
-   milliseconds, so you actually run it.
+## Documentation
+
+- [PLAN.md](PLAN.md) — durable state, open questions, log
+- [docs/hardware/stm32f469i-disco.md](docs/hardware/stm32f469i-disco.md) — board facts (identity verified; display/SDRAM rows pending)
+
+## What I'd do differently
+
+- The scaffold began before the display facts were gathered; the honest
+  ordering is: schematic + datasheets first, then a fact sheet that is
+  verified where it matters, then bring-up. The sheet now carries that
+  distinction explicitly instead of a confident guess.
+- SDRAM-in-`SystemInit` ordering is called out in the plan as a dedicated
+  session — experience from other projects suggests display bring-up
+  entangles itself with application work if it isn't kept separate.
 
 ## License
 
-Code and tooling: **Apache-2.0** · Documentation: **CC BY 4.0**
-(per the program's publishing rules, 06-publishing §2.3).
+Code: **Apache-2.0** (`LICENSE`) · Documentation: **CC BY 4.0**
+(`docs/LICENSE-docs.md`) — per the program's publishing rules
+([06-publishing.md §2.3](https://github.com/caiobvilar/Embedded_Portfolio/blob/main/06-publishing.md)).
